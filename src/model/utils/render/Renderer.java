@@ -1,9 +1,10 @@
-package model.utils;
+package model.utils.render;
 
 import geometricCalculus.GeometricCalculator;
 import geometricCalculus.model.Vector;
 import model.elementstate.MaterialLightState;
 import model.elementstate.MaterialTextureState;
+import model.utils.PictureBufferState;
 
 /**
  * Created by PhilippKroll on 19.08.2016.
@@ -69,7 +70,7 @@ public class Renderer {
      * @param vectors the vertices, which define a polygon
      * @throws IllegalArgumentException the vertices have to define either a point, a segment, a triangle or a rectangle, otherwise a exception is thrown
      */
-    public void scanline(PictureBufferState pictureBuffer,Vector... vectors){
+    public void scanline(PictureBufferState pictureBuffer, Vector... vectors){
         if(vectors.length < 0 || vectors.length > 4){
             throw new IllegalArgumentException();
         }
@@ -99,8 +100,8 @@ public class Renderer {
         if(v1.length() != 2 || v2.length() != 2){
             throw new IllegalArgumentException();
         }
-        if(v1.get(0) < 0 || v1.get(0) >= pictureBuffer.getWidth() || v1.get(1) < 0 || v1.get(1) >= pictureBuffer.gethHeight() ||
-                v2.get(0) < 0 || v2.get(0) >= pictureBuffer.getWidth() || v2.get(1) < 0 || v2.get(1) >= pictureBuffer.gethHeight()){
+        if(v1.get(0) < 0 || v1.get(0) >= pictureBuffer.getWidth() || v1.get(1) < 0 || v1.get(1) >= pictureBuffer.getHeight() ||
+                v2.get(0) < 0 || v2.get(0) >= pictureBuffer.getWidth() || v2.get(1) < 0 || v2.get(1) >= pictureBuffer.getHeight()){
             throw new IllegalArgumentException();
         }
         //System.out.println("scanTwo");
@@ -127,15 +128,15 @@ public class Renderer {
             while(yStart <= yEnd){
                 if(gridMode && (yStart == y1 || yStart == y2)){
                     for (int xi = 0;xi < thickness;xi++){
-                        pictureBuffer.setColor(pictureBuffer.gethHeight()-yStart-1,(int)x1-(thickness/2)+xi,gridColor);
+                        pictureBuffer.setColor(pictureBuffer.getHeight()-yStart-1,(int)x1-(thickness/2)+xi,gridColor);
                     }
                 } else {
                     for (int xi = 0;xi < thickness;xi++){
                         if(gridMode && (xi == 0 || xi == thickness-1)){
-                            pictureBuffer.setColor(pictureBuffer.gethHeight()-yStart-1,(int)x1-(thickness/2)+xi,gridColor);
+                            pictureBuffer.setColor(pictureBuffer.getHeight()-yStart-1,(int)x1-(thickness/2)+xi,gridColor);
                         } else {
                             int c = texture.getColor();
-                            pictureBuffer.setColor(pictureBuffer.gethHeight()-yStart-1,(int)x1-(thickness/2)+xi,c);
+                            pictureBuffer.setColor(pictureBuffer.getHeight()-yStart-1,(int)x1-(thickness/2)+xi,c);
                         }
                     }
                 }
@@ -158,10 +159,10 @@ public class Renderer {
             while(xStart <= xEnd){
                 for (int yi = 0;yi < thickness;yi++){
                     if(gridMode && (yi == 0 || yi == thickness-1)){
-                        pictureBuffer.setColor(pictureBuffer.gethHeight()-(int)n-(thickness/2)+yi-1,xStart,gridColor);
+                        pictureBuffer.setColor(pictureBuffer.getHeight()-(int)n-(thickness/2)+yi-1,xStart,gridColor);
                     } else{
                         int c = texture.getColor();
-                        pictureBuffer.setColor(pictureBuffer.gethHeight()-(int)n-(thickness/2)+yi-1,xStart,c);
+                        pictureBuffer.setColor(pictureBuffer.getHeight()-(int)n-(thickness/2)+yi-1,xStart,c);
                     }
                 }
                 xStart++;
@@ -184,12 +185,12 @@ public class Renderer {
         while(x < xEnd){
             int y = (int)linearFunction(x,m,n);
             for(int i = x-thickness/2;i < x+thickness/2;i++) {
-                if(i >= 0 && i < pictureBuffer.getWidth() && y >= 0 && y <= pictureBuffer.gethHeight()){
+                if(i >= 0 && i < pictureBuffer.getWidth() && y >= 0 && y <= pictureBuffer.getHeight()){
                     if(gridMode && (x == 0 || x == thickness-1)){
-                        pictureBuffer.setColor(pictureBuffer.gethHeight()-y-1,x,gridColor);
+                        pictureBuffer.setColor(pictureBuffer.getHeight()-y-1,x,gridColor);
                     } else {
                         int c = texture.getColor();
-                        pictureBuffer.setColor(pictureBuffer.gethHeight()-y-1,i,c);
+                        pictureBuffer.setColor(pictureBuffer.getHeight()-y-1,i,c);
                     }
                 }
             }
@@ -213,7 +214,7 @@ public class Renderer {
             throw new IllegalArgumentException();
         }
         int width = pictureBufferState.getWidth();
-        int height = pictureBufferState.gethHeight();
+        int height = pictureBufferState.getHeight();
         if(v1.get(0) < 0 || v1.get(0) >= width || v2.get(0) < 0 || v2.get(0) >= width || v3.get(0) < 0 || v3.get(0) >= width || v1.get(1) < 0 || v1.get(1) >= height || v2.get(1) < 0 || v2.get(1) >= height || v3.get(1) < 0 || v3.get(1) >= height){
             throw new IllegalArgumentException("v1: x="+v1.get(0)+",y="+v1.get(1)+"\n"+"v2: x="+v2.get(0)+",y="+v2.get(1)+"\n"+"v3: x="+v3.get(0)+",y="+v3.get(1));
         }
@@ -319,7 +320,7 @@ public class Renderer {
      * @param pbs the picturebuffer to paint in
      */
     private void fillCol(int col,int rowStart,int rowEnd,MaterialTextureState t,PictureBufferState pbs){
-        int h = pbs.gethHeight();
+        int h = pbs.getHeight();
         while(rowStart <= rowEnd){
             pbs.setColor(h - rowStart,col,t.getColor());
             rowStart++;
@@ -337,7 +338,7 @@ public class Renderer {
      * @param pbs the picturebuffer to paint in
      */
     private void fillRow(int row,int colStart,int colEnd,MaterialTextureState t,PictureBufferState pbs){
-        int h = pbs.gethHeight();
+        int h = pbs.getHeight();
         int w = pbs.getWidth();
         //System.out.println("row:"+row+" minX:"+colStart+" maxX:"+colEnd);
         while(row >= 0 && row < h && colStart >= 0 && colStart <= colEnd && colStart < w){
@@ -359,7 +360,7 @@ public class Renderer {
      * @param pbs the picturebuffer to paint in
      */
     private void fillRow(int row,int colStart,int colEnd,int c,PictureBufferState pbs){
-        int h = pbs.gethHeight();
+        int h = pbs.getHeight();
         int w = pbs.getWidth();
         //System.out.println("row:"+row+" minX:"+colStart+" maxX:"+colEnd);
         while(row >= 0 && row < h && colStart >= 0 && colStart <= colEnd && colStart < w){
