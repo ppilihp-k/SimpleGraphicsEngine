@@ -1,10 +1,27 @@
 package model.utils.render;
 
-import geometricCalculus.GeometricCalculator;
-import geometricCalculus.model.Vector;
-import model.elementstate.MaterialLightState;
+import exceptions.InternalErrorException;
+import exceptions.NoPropperDimensionException;
+import model.geometrie.Line;
+import model.geometrie.Polygon;
+import model.geometrie.Triangle;
+import model.utils.render.strategys.MyRenderStrategy;
+import model.utils.render.strategys.RenderStrategy;
+import model.utils.render.strategys.ScanLineTwo;
+import singlethreadedGeometrie.geometricCalc.GeometricCalculator;
+import singlethreadedGeometrie.geometricCalc.model.Segment;
+import singlethreadedGeometrie.geometricCalc.model.Vector;
 import model.elementstate.MaterialTextureState;
+import model.utils.PaintBox;
 import model.utils.PictureBufferState;
+import utils.Tupel;
+import exceptions.*;
+
+import java.util.LinkedList;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * Created by PhilippKroll on 19.08.2016.
@@ -17,10 +34,48 @@ public class Renderer {
 
     private int gridColor;
 
+    private Line x,y,z;
+
+    private ScanLineTwo scanLineTwo;
+
+    private RenderStrategy strategy;
+
+    private PaintBox pb;
+
+    private RenderMonitor monitor;
+
     public Renderer(GeometricCalculator gc){
         gridMode = false;
-        gridColor = 255 << 24 | 255;
+        gridColor = 255 << 24 | 255 << 16 | 255 << 8 | 255;
         this.gc = gc;
+        strategy = new MyRenderStrategy(gc);
+        scanLineTwo = new ScanLineTwo();
+        pb = new PaintBox();
+        //monitor = new RenderMonitor();
+    }
+
+    public void submit(Polygon p,PictureBufferState pbs){
+        //RenderTask rt = new RenderTask(p,pbs);
+        //monitor.submit(rt);
+        scanline(pbs,p);
+    }
+
+    /**
+     * sets a new strategy for the renderer
+     * @param r
+     */
+    public void setRenderStrategy(RenderStrategy r){
+        if(r != null){
+            this.strategy = r;
+        }
+    }
+
+    /**
+     * getter for the render strategy
+     * @return
+     */
+    public RenderStrategy getRenderStrategy(){
+        return strategy;
     }
 
     /**
@@ -64,390 +119,147 @@ public class Renderer {
     }
 
     /**
+     * this method is used to determine the linesegments of the polygon p are inside the quadrat, defined by the 4 vectors
+     * @param p
+     * @param vertecies
+     * @return
+     * @throws NoPropperDimensionException
+     */
+    public LinkedList<Vector> clip(Polygon p, Vector ... vertecies) throws NoPropperDimensionException,NoResultException,InfiniteResultsException,InternalErrorException{
+        /*interprese the vertecies as a polygon -> imagine, pairwise edges between the vertecies*/
+        if(p.getDimension() != 2){
+            NoPropperDimensionException npe = new NoPropperDimensionException();
+            npe.getMessage().concat("\n\"clipping is constructed only for two dimensional polygons");
+            throw npe;
+        }
+        LinkedList<Vector> output  = p.getVertexList();
+        LinkedList<Vector> input = new LinkedList<>();
+        LinkedList<Tupel<Vector,Vector>> clipEdges = toEdges(vertecies);
+
+        /*clip against the the edges of the polygon, defined by vertecies*/
+        /*traverse all edges of the clip polygon*/
+        for (Tupel<Vector,Vector> clipEdge: clipEdges) {
+            input.addAll(output);
+            output.clear();
+            Vector S = input.getLast();
+            for (Vector E: input) {
+                boolean eCw = isClockwise(E,clipEdge);
+                if(eCw){
+                    /*E/clipEdge.frist is located clockwise from clipEdge.second/clipEdge.frist*/
+                    boolean sCw = isClockwise(S,clipEdge);
+                    if(!sCw){
+                        Segment s1 = new Segment(E,gc.subtract(E,S));
+                        Segment s2 = new Segment(clipEdge.first,gc.subtract(clipEdge.second,clipEdge.first));
+                        try{
+                            output.add(gc.intersect(s1,s2));
+                        } catch (Exception e){
+                            throw e;
+                        }
+                    }
+                    output.add(E);
+                } else if(isClockwise(S,clipEdge)){
+                    Segment s1 = new Segment(E,gc.subtract(E,S));
+                    Segment s2 = new Segment(clipEdge.first,gc.subtract(clipEdge.second,clipEdge.first));
+                    try{
+                        output.add(gc.intersect(s1,s2));
+                    } catch (Exception e){
+                        throw e;
+                    }
+                }
+                S = E;
+            }
+        }
+        /*create the new polygons*/
+        LinkedList<Polygon> outputPolygons = new LinkedList<>();
+        if(true){
+            return output;
+        }
+        if(output.size() == 2){
+            outputPolygons.add(new Line(output.poll(),output.poll()));
+        } else if(output.size() % 2 == 0){
+            /*the number of vertecies is even, it is possible to construct |output| / 2 triangles*/
+
+        } else {
+            /*form triangles -> the number ob vertecies is odd*/
+        }
+        return null;
+    }
+
+    private boolean isClockwise(Vector v,Tupel<Vector,Vector> t){
+        double sp = gc.scalarproduct(gc.subtract(v,t.first),gc.subtract(t.second,t.first));
+        System.out.println(sp >= 0);
+        return sp >= 0;
+    }
+
+    /**
+     * creates a list of edges from a set of vectors
+     * @param verts the vectors, which form a polygon
+     * @return a list with edges
+     */
+    private LinkedList<Tupel<Vector,Vector>> toEdges(Vector ... verts){
+        LinkedList<Tupel<Vector,Vector>> output = new LinkedList<>();
+        for (int i = 0;i < verts.length;i++){
+            Tupel<Vector,Vector> t = new Tupel<>();
+            t.first = verts[i];
+            t.second = verts[(i+1)%verts.length];
+            output.add(t);
+        }
+        return output;
+    }
+
+    /**
      * draws the given polygon to the imagebuffer of this renderer.
      * the vectors have to contain the two dimensional representation of the polygon, plus the depth infortmation for the zbuffer!
      * so make sure, the input is already a two dimensional representation of polygon, that should be painted, and the third vector position contains the depth information
-     * @param vectors the vertices, which define a polygon
+     * single-threaded method call!
+     * @param p a polygon
      * @throws IllegalArgumentException the vertices have to define either a point, a segment, a triangle or a rectangle, otherwise a exception is thrown
      */
-    public void scanline(PictureBufferState pictureBuffer, Vector... vectors){
-        if(vectors.length < 0 || vectors.length > 4){
-            throw new IllegalArgumentException();
-        }
-        if(vectors.length == 2){
-            System.out.println("Renderer.scanline() -> scanTwo()");
-            //scanTwo(vectors[0].subVector(0,2),vectors[1].subVector(0,2),5,,null,pictureBuffer);
-        }
-    }
-
-    private void scanOne(Vector v1, MaterialTextureState txs, MaterialLightState mls,PictureBufferState pictureBuffer){
-        if(pictureBuffer.getDepth((int)v1.get(1),(int)v1.get(0)) >= v1.get(2)){
-            pictureBuffer.setDepth((int)v1.get(1),(int)v1.get(0),(float)v1.get(2));
-            pictureBuffer.setColor((int)v1.get(1),(int)v1.get(0),txs.getColor());
-        }
-    }
-
-    /**
-     * renders a line between the two vectors v1 and v2 with the desired thickness into the given picturebuffer.
-     * this method uses the fact, that v1 and v2 can be interpreted as a segment. so the pixels to set are computed by a
-     * linear function like f(x)=mx+n ,where m is the gradient and n is the intersection with the y axis.
-     * @param v1
-     * @param v2
-     * @param thickness
-     * @param pictureBuffer
-     */
-    public void scanTwo(Vector v1, Vector v2,int thickness,MaterialTextureState texture,PictureBufferState pictureBuffer){
-        if(v1.length() != 2 || v2.length() != 2){
-            throw new IllegalArgumentException();
-        }
-        if(v1.get(0) < 0 || v1.get(0) >= pictureBuffer.getWidth() || v1.get(1) < 0 || v1.get(1) >= pictureBuffer.getHeight() ||
-                v2.get(0) < 0 || v2.get(0) >= pictureBuffer.getWidth() || v2.get(1) < 0 || v2.get(1) >= pictureBuffer.getHeight()){
-            throw new IllegalArgumentException();
-        }
-        //System.out.println("scanTwo");
-        float x1 = (float)v1.get(0);
-        float y1 = (float)v1.get(1);
-
-        float x2 = (float)v2.get(0);
-        float y2 = (float)v2.get(1);
-
-        float denom = (x2 - x1);
-        float nom = (y2 - y1);
-
-        if(denom == 0){
-            /*there is no gradient! so the segment hat to be parallel to the y axis*/
-            int yStart = 0;
-            int yEnd = 0;
-            if(y1 < y2){
-                yStart = (int)y1;
-                yEnd = (int)y2;
+    public void scanline(PictureBufferState pictureBuffer, Polygon p){
+        if(gridMode){
+            if(p instanceof Line){
+                Vector[] verts = p.getVertices();
+                if(verts[0].length() != 2 || verts[1].length() != 2){
+                    throw new IllegalArgumentException();
+                }
+                MaterialTextureState gridTexture = new MaterialTextureState(null);
+                gridTexture.setBackgroundColor(gridColor);
+                scanLineTwo.scanTwo(verts[0],verts[1],2,gridTexture,pictureBuffer);
+            } else if(p instanceof Triangle){
+                Vector[] verts = p.getVertices();
+                MaterialTextureState gridTexture = new MaterialTextureState(null);
+                gridTexture.setBackgroundColor(gridColor);
+                scanLineTwo.scanTwo(verts[0],verts[1],2,gridTexture,pictureBuffer);
+                scanLineTwo.scanTwo(verts[0],verts[2],2,gridTexture,pictureBuffer);
+                scanLineTwo.scanTwo(verts[1],verts[2],2,gridTexture,pictureBuffer);
             } else {
-                yStart = (int)y2;
-                yEnd = (int)y1;
-            }
-            while(yStart <= yEnd){
-                if(gridMode && (yStart == y1 || yStart == y2)){
-                    for (int xi = 0;xi < thickness;xi++){
-                        pictureBuffer.setColor(pictureBuffer.getHeight()-yStart-1,(int)x1-(thickness/2)+xi,gridColor);
+                Set<Triangle> set = p.toTriangles();
+                for (Triangle t:set){
+                    Vector[] verts = t.getVertices();
+                    if(verts[0].length() != 2 || verts[1].length() != 2 || verts[2].length() != 2){
+                        throw new IllegalArgumentException();
                     }
-                } else {
-                    for (int xi = 0;xi < thickness;xi++){
-                        if(gridMode && (xi == 0 || xi == thickness-1)){
-                            pictureBuffer.setColor(pictureBuffer.getHeight()-yStart-1,(int)x1-(thickness/2)+xi,gridColor);
-                        } else {
-                            int c = texture.getColor();
-                            pictureBuffer.setColor(pictureBuffer.getHeight()-yStart-1,(int)x1-(thickness/2)+xi,c);
-                        }
-                    }
+                    MaterialTextureState gridTexture = new MaterialTextureState(null);
+                    gridTexture.setBackgroundColor(gridColor);
+                    scanLineTwo.scanTwo(verts[0],verts[1],2,gridTexture,pictureBuffer);
+                    scanLineTwo.scanTwo(verts[0],verts[2],2,gridTexture,pictureBuffer);
+                    scanLineTwo.scanTwo(verts[1],verts[2],2,gridTexture,pictureBuffer);
                 }
-                yStart++;
-            }
-            return;
-        }
-
-        if(nom == 0){
-            /*if the gradient of the segment equals 0, then the segment has to be parallel to the x-axis*/
-            int xStart,xEnd;
-            if(x1 < x2){
-                xStart = (int)x1;
-                xEnd = (int)x2;
-            } else {
-                xStart = (int)x2;
-                xEnd = (int)x1;
-            }
-            float n = yAxisIntersection(x1,y1,0);
-            while(xStart <= xEnd){
-                for (int yi = 0;yi < thickness;yi++){
-                    if(gridMode && (yi == 0 || yi == thickness-1)){
-                        pictureBuffer.setColor(pictureBuffer.getHeight()-(int)n-(thickness/2)+yi-1,xStart,gridColor);
-                    } else{
-                        int c = texture.getColor();
-                        pictureBuffer.setColor(pictureBuffer.getHeight()-(int)n-(thickness/2)+yi-1,xStart,c);
-                    }
-                }
-                xStart++;
-            }
-            return;
-        }
-
-        float m = nom / denom;
-        float n = yAxisIntersection(x1,y1,m);
-
-        int x;
-        int xEnd;
-        if(x1 < x2){
-            x = (int)x1;
-            xEnd = (int)x2;
-        } else {
-            x = (int)x2;
-            xEnd = (int)x2;
-        }
-        while(x < xEnd){
-            int y = (int)linearFunction(x,m,n);
-            for(int i = x-thickness/2;i < x+thickness/2;i++) {
-                if(i >= 0 && i < pictureBuffer.getWidth() && y >= 0 && y <= pictureBuffer.getHeight()){
-                    if(gridMode && (x == 0 || x == thickness-1)){
-                        pictureBuffer.setColor(pictureBuffer.getHeight()-y-1,x,gridColor);
-                    } else {
-                        int c = texture.getColor();
-                        pictureBuffer.setColor(pictureBuffer.getHeight()-y-1,i,c);
-                    }
-                }
-            }
-            x++;
-        }
-
-    }
-
-    private float linearFunction(int x, float m,float n){
-        return (x*m)+n;
-    }
-
-    private float yAxisIntersection(float x,float y, float m){
-        return y - (m * x);
-    }
-
-    public void scanThree(Vector v1,Vector v2,Vector v3,MaterialTextureState texture,PictureBufferState pictureBufferState){
-        //System.out.println("scanTrhee");
-        /*test, if the vectors satisfy the requirements*/
-        if(v1.length() != 2 || v2.length() != 2 || v3.length() != 2){
-            throw new IllegalArgumentException();
-        }
-        int width = pictureBufferState.getWidth();
-        int height = pictureBufferState.getHeight();
-        if(v1.get(0) < 0 || v1.get(0) >= width || v2.get(0) < 0 || v2.get(0) >= width || v3.get(0) < 0 || v3.get(0) >= width || v1.get(1) < 0 || v1.get(1) >= height || v2.get(1) < 0 || v2.get(1) >= height || v3.get(1) < 0 || v3.get(1) >= height){
-            throw new IllegalArgumentException("v1: x="+v1.get(0)+",y="+v1.get(1)+"\n"+"v2: x="+v2.get(0)+",y="+v2.get(1)+"\n"+"v3: x="+v3.get(0)+",y="+v3.get(1));
-        }
-
-        /*go through the single lines and determine the min and max values*/
-        /*determine y-mid, y-max and y-min*/
-        //sortByY(v1,v2,v3);
-
-        Vector tmp;
-        if(v3.get(1) > v1.get(1)){
-            //System.out.println("v3 grüßer v1");
-            tmp = v1;
-            v1 = v3;
-            v3 = tmp;
-        }
-        if(v1.get(1) < v2.get(1)){
-            //System.out.println("v2 größer v1");
-            tmp = v1;
-            v1 = v2;
-            v2 = tmp;
-        }
-        if(v2.get(1) < v3.get(1)){
-            //System.out.println("v2 größer v3");
-            tmp = v3;
-            v3 = v2;
-            v2 = tmp;
-        }
-
-        /*check, if v2 is on the left or on the right side of vector v1v3*/
-        //System.out.println(gc);
-        Vector v1v3 = gc.subtract(v3,v1);
-        Vector v1v2 = gc.subtract(v2,v1);
-        float scalarprodukt = (float)v1v3.get(0)*(float)v1v2.get(1) - (float)v1v3.get(1)*(float)v1v2.get(0);
-
-        if(scalarprodukt < 0){
-            //System.out.println("links");
-            /*the vector v2 is located on the left side of v1v3. this means, that the minboarder is the vector v1v3 and the maxborder are the vectors v1v2 and v2v3*/
-            int y = (int)v3.get(1);
-            while(y < (int)v1.get(1)){
-                int xMax = (int)getX(v1,v3,y);
-                int xMin;
-                if(y <= (int)v2.get(1)){
-                    xMin = (int)getX(v2,v3,y);
-                } else {
-                    xMin = (int)getX(v1,v2,y);
-                }
-                //System.out.println("(x:"+xMin+",y:"+y+")");
-                fillRow(y,xMin,xMax,texture,pictureBufferState);
-                y++;
             }
         } else {
-            //System.out.println("rechts");
-            /*the vector v2 is located on the right side of v1v3. this means, that the minboarder are the vectors v1v2 and v2v3 and the maxborder is the vector v1v3*/
-            int y = (int)v3.get(1);
-            int yMax = (int)v1.get(1);
-            while(y <= yMax){
-                int xMin = (int)getX(v1,v3,y);
-                int xMax;
-                if(y <= (int)v2.get(1)){
-                    xMax = (int)getX(v2,v3,y);
-                } else {
-                    xMax = (int)getX(v1,v2,y);
-                }
-                //System.out.println(y);
-                //System.out.println("(x:"+xMin+",y:"+y+")");
-                fillRow(y,xMin,xMax,texture,pictureBufferState);
-                y++;
-            }
-        }
-        //System.out.println("fertig!");
-    }
-
-    /**
-     * computes the x value of the linear function given by v1 and v2 at the f(x) value 'row'
-     * this is a simple change of the equation f(x)=mx+n to (f(x)-n) / m = x
-     * @param v1 a vector on the segment determined by v1 and v2
-     * @param v2 a vector on the segment determined by v1 and v2
-     * @param row the y or f(x) value, which is necessary to compute x from this segment
-     * @return returns the x value, as float, from the segment, represented by v1 and v2, at the y value of row
-     */
-    private float getX(Vector v1,Vector v2,float row){
-        float nom = (float)v2.get(1) - (float)v1.get(1);
-        if(nom == 0){
-            return (float)v1.get(1);
-        }
-        float denom = (float)v2.get(0) - (float)v1.get(0);
-        if(denom == 0){
-            return (float)v1.get(0);
-        }
-        float m = nom / denom;
-        float n = (float)v1.get(1) - (m * (float)v1.get(0));
-        return (row - n) / m;
-    }
-
-    /**
-     * fills a column with the color information of the texture, if the texture has no image, the backgroundcolor is filled in
-     * the row and col values have to be in the range of 0 <= rowStart,rowEnd < pbs.getHeight() and 0 <= col < pbs.getWidth() otherwise
-     * nothing is filled into pbs
-     * @param col the column which is painted
-     * @param rowStart the y start value
-     * @param rowEnd the y end value
-     * @param t the texture to fill in
-     * @param pbs the picturebuffer to paint in
-     */
-    private void fillCol(int col,int rowStart,int rowEnd,MaterialTextureState t,PictureBufferState pbs){
-        int h = pbs.getHeight();
-        while(rowStart <= rowEnd){
-            pbs.setColor(h - rowStart,col,t.getColor());
-            rowStart++;
+            strategy.render(pictureBuffer,p);
         }
     }
 
-    /**
-     * fills a row with the color information of the texture, if the texture has no image, the backgroundcolor is filled in
-     * the row and col values have to be in the range of 0 <= row < pbs.getHeight() and 0 <= colStart,colEnd < pbs.getWidth() otherwise
-     * nothing is filled into pbs
-     * @param row the row which is painted
-     * @param colStart the x start value
-     * @param colEnd the x end value
-     * @param t the texture to fill in
-     * @param pbs the picturebuffer to paint in
-     */
-    private void fillRow(int row,int colStart,int colEnd,MaterialTextureState t,PictureBufferState pbs){
-        int h = pbs.getHeight();
-        int w = pbs.getWidth();
-        //System.out.println("row:"+row+" minX:"+colStart+" maxX:"+colEnd);
-        while(row >= 0 && row < h && colStart >= 0 && colStart <= colEnd && colStart < w){
-            //System.out.println((t.getColor() >> 24) & 0xff);
-            //System.out.println("(x:"+colStart+",y:"+(h - row - 1)+")");
-            pbs.setColor(h - row - 1,colStart,t.getColor());
-            colStart++;
+    public void clear(PictureBufferState pbs){
+        if(gridMode){
+            int c = (pbs.getBackgroundcolor().getAlpha() << 24) | pbs.getBackgroundcolor().getRGB();
+            pbs.setBackgroundcolor(pb.processARGB(255,0,0,0));
+            pbs.clear();
+            pbs.setBackgroundcolor(c);
+        } else {
+            pbs.clear();
         }
-    }
-
-    /**
-     * fills a row with the color information
-     * the row and col values have to be in the range of 0 <= row < pbs.getHeight() and 0 <= colStart,colEnd < pbs.getWidth() otherwise
-     * nothing is filled into pbs
-     * @param row the row which is painted
-     * @param colStart the x start value
-     * @param colEnd the x end value
-     * @param c the color to fill in
-     * @param pbs the picturebuffer to paint in
-     */
-    private void fillRow(int row,int colStart,int colEnd,int c,PictureBufferState pbs){
-        int h = pbs.getHeight();
-        int w = pbs.getWidth();
-        //System.out.println("row:"+row+" minX:"+colStart+" maxX:"+colEnd);
-        while(row >= 0 && row < h && colStart >= 0 && colStart <= colEnd && colStart < w){
-            //System.out.println((t.getColor() >> 24) & 0xff);
-            //System.out.println("(x:"+colStart+",y:"+(h - row - 1)+")");
-            pbs.setColor(h - row - 1,colStart,c);
-            colStart++;
-        }
-    }
-
-    /**
-     * returns the vector with the highest value at index 'index'
-     * @param index
-     * @param V
-     * @return
-     */
-    private float getHighest(int index,Vector ... V){
-        if(index < 0 || index >= V[0].length()){
-            throw new IllegalArgumentException();
-        }
-        float x = (float)V[0].get(index);
-        for (Vector v : V) {
-            x = (float)v.get(index) > x ? (float)v.get(index) : x;
-        }
-        return x;
-    }
-
-    /**
-     * returns the vector with the lowest value at index 'index'
-     * @param index
-     * @param V
-     * @return
-     */
-    private float getLowest(int index,Vector ... V){
-        if(index < 0 || index >= V[0].length()){
-            throw new IllegalArgumentException();
-        }
-        float x = (float)V[0].get(index);
-        for (Vector v : V) {
-            x = (float)v.get(index) < x ? (float)v.get(index) : x;
-        }
-        return x;
-    }
-
-    /**
-     * returns an integer in ABGR java standard, all values have to be in range of 0 - 255 otherwise the methodcall will have a unpredictable outcome
-     * @param r the red value
-     * @param g the green value
-     * @param b the blue values
-     * @param a the alpha value
-     * @return an integer representing the desired color
-     */
-    public int processARGB(int r,int g,int b, int a){
-        return (a & 0xff) << 24 | (r & 0xff) << 16 | (g & 0xff) << 8 | (b & 0xff);
-    }
-
-    /**
-     * computes the red value of the color c
-     * @param c the color
-     * @return the red value
-     */
-    public int getRed(int c){
-        return 0xff & c;
-    }
-    /**
-     * computes the green value of the color c
-     * @param c the color
-     * @return the green value
-     */
-    public int getGreen(int c){
-        return 0xff & (c >> 8);
-    }
-    /**
-     * computes the blue value of the color c
-     * @param c the color
-     * @return the blue value
-     */
-    public int getBlue(int c){
-        return 0xff & (c >> 16);
-    }
-    /**
-     * computes the aplha value of the color c
-     * @param c the color
-     * @return the alpha value
-     */
-    public int getAlpha(int c){
-        return 0xff & (c >> 24);
     }
 
     private void checkGeometricCalculator(){
